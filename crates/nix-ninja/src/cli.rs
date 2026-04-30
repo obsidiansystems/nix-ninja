@@ -6,6 +6,7 @@ use clap::Parser;
 use harmonia_store_core::store_path::StoreDir;
 use nix_ninja_task::derived_file::DerivedFile;
 use nix_tool::{NixTool, StoreConfig};
+use nix_varlink_client::VarlinkClient;
 use std::{
     env, fs,
     path::{Path, PathBuf},
@@ -97,14 +98,14 @@ pub fn run() -> Result<i32> {
     match build(&cli, &build_dir) {
         Ok(derived_file) => {
             if cli.is_output_derivation {
-                let out = env::var("out").map_err(|_| anyhow!("Expected $out to be set"))?;
-                fs::copy(
-                    derived_file
-                        .derived_path
-                        .root_path()
-                        .to_absolute_path(&cli.store_dir),
-                    out,
-                )?;
+                let final_drv = derived_file.derived_path.root_path();
+                if let Some(mut client) = VarlinkClient::connect_from_env()? {
+                    client.submit_output(&cli.store_dir, "out", final_drv)?;
+                } else {
+                    let out =
+                        env::var("out").map_err(|_| anyhow!("Expected $out to be set"))?;
+                    fs::copy(final_drv.to_absolute_path(&cli.store_dir), out)?;
+                }
             } else {
                 local::symlink_derived_files(
                     &nix_tool,

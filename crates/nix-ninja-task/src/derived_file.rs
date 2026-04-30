@@ -20,14 +20,20 @@ pub struct DerivedFile {
     pub derived_path: SingleDerivedPath,
     pub build_path: PathBuf, // Where file appears in build dir (symlink destination)
     pub rel_path: Option<PathBuf>, // Where file appears within derived path (None for opaque)
+    /// Output name when this DerivedFile represents an output of the calling
+    /// derivation. Needed by the Varlink path so we can call
+    /// `SubmitOutput(name, ...)`. `None` for inputs.
+    pub output_name: Option<String>,
 }
 
 impl DerivedFile {
     /// Encodes this DerivedFile for passing from nix-ninja to nix-ninja-task.
     ///
-    /// Format: `"<path_or_placeholder>:<build_path>:<rel_path>"`
+    /// Format: `"<path_or_placeholder>:<build_path>:<rel_path>:<output_name>"`
     ///
     /// where `<path>` is *without* the store dir. (That is known from context.)
+    /// `<output_name>` is empty for inputs and set to the derivation output
+    /// name for outputs (so the Varlink path can submit them).
     pub fn to_encoded(&self, store_dir: &StoreDir) -> String {
         let path_str = store_dir
             .display(&StorePathOrPlaceholder::from(&self.derived_path))
@@ -37,16 +43,22 @@ impl DerivedFile {
             .as_ref()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
+        let name_str = self.output_name.as_deref().unwrap_or_default();
         format!(
-            "{}:{}:{}",
+            "{}:{}:{}:{}",
             path_str,
             &self.build_path.to_string_lossy(),
-            rel_path_str
+            rel_path_str,
+            name_str,
         )
     }
 
     /// Decodes a DerivedFile from the string format created by `to_encoded()`.
     /// Used by nix-ninja-task to recreate build directory symlinks.
+    ///
+    /// Accepts the legacy 3-field format (without output name) for forward
+    /// compatibility while the workspace transitions; new encoders always
+    /// emit the 4-field form.
     pub fn from_encoded(store_dir: &StoreDir, encoded: &str) -> Result<Self> {
         let mut parts = encoded.split(':');
         let store_path_str = parts
@@ -62,11 +74,13 @@ impl DerivedFile {
                 .ok_or_else(|| anyhow!("Missing build path in encoded derived file: {encoded}"))?,
         );
         let rel_path = parts.next().filter(|s| !s.is_empty()).map(PathBuf::from);
+        let output_name = parts.next().filter(|s| !s.is_empty()).map(str::to_string);
 
         Ok(DerivedFile {
             derived_path,
             build_path,
             rel_path,
+            output_name,
         })
     }
 

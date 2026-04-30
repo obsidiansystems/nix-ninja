@@ -74,8 +74,8 @@
           root = ../../.;
           fileset = inputs.globset.lib.globs ../../. [
             "Cargo.{toml,lock}"
-            "crates/nix-{libstore,ninja-task}/Cargo.toml"
-            "crates/nix-{libstore,ninja-task}/**/*.rs"
+            "crates/nix-{libstore,ninja-task,varlink-client}/Cargo.toml"
+            "crates/nix-{libstore,ninja-task,varlink-client}/**/*.rs"
             "crates/deps-infer/Cargo.toml"
             "crates/deps-infer/**/*.rs"
           ];
