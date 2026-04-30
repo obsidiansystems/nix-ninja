@@ -188,17 +188,18 @@
         "nixpkgs-regression": []
       },
       "locked": {
-        "lastModified": 1773272954,
-        "narHash": "sha256-mn4wy1IOr5La3jL5b+tHqKnIT65Xz8EF6MvOoVD4Eow=",
-        "owner": "NixOS",
-        "repo": "nix",
-        "rev": "6d1c28f7e88091244fbfaae2af29555492a0e743",
-        "type": "github"
+        "lastModified": 1777578008,
+        "narHash": "sha256-GprY/T8JrbrLT/gbOMkPNGFijBkLCnllxDTm543gA3k=",
+        "ref": "varlink-pr-13768",
+        "rev": "90aba443e6b296c8a2a71d1cc44b23491c87cf3a",
+        "revCount": 23534,
+        "type": "git",
+        "url": "file:///home/amaanq/projects/nix/varlink"
       },
       "original": {
-        "owner": "NixOS",
-        "repo": "nix",
-        "type": "github"
+        "ref": "varlink-pr-13768",
+        "type": "git",
+        "url": "file:///home/amaanq/projects/nix/varlink"
       }
     },
     "nixpkgs": {

@@ -56,6 +56,7 @@ pub fn symlink_derived_files(
             derived_path: SingleDerivedPath::Opaque(store_path.clone()),
             build_path: df.build_path.clone(),
             rel_path: df.rel_path.clone(),
+            output_name: df.output_name.clone(),
         })
         .collect();
 

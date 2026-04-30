@@ -7,6 +7,7 @@ use harmonia_store_core::derivation::{Derivation, DerivationOutput};
 use harmonia_store_core::derived_path::{OutputName, SingleDerivedPath};
 use harmonia_store_core::placeholder::Placeholder;
 use harmonia_store_core::store_path::{ContentAddressMethodAlgorithm, StoreDir, StorePath};
+use nix_varlink_client::{dump_nar, VarlinkClient};
 use n2::{
     canon,
     graph::{self, Build, BuildDependencies, BuildId, File, FileId},
@@ -550,14 +551,18 @@ fn build_task_derivation(tools: Tools, task: Task) -> Result<Derivation> {
         );
 
         // Create a placeholder and encode output for nix-ninja-task.
+        // Format: `<placeholder>:<build_path>:<rel_path>:<output_name>` —
+        // the trailing name is consumed by the Varlink path
+        // (`SubmitOutput(name, path)`) and ignored by the legacy path.
         let placeholder = Placeholder::standard_output(
             &OutputName::from_str(&normalized_name).context("While creating placeholder")?,
         );
         let encoded = format!(
-            "{}:{}:{}",
+            "{}:{}:{}:{}",
             &placeholder.render().display(),
             &output_path.display(),
-            &output_path.display()
+            &output_path.display(),
+            &normalized_name,
         );
         outputs.push(encoded);
     }
@@ -693,9 +698,14 @@ fn build_dynamic_task_derivation(
     let temp_dir = std::env::temp_dir().join(format!("drv-json-{:016x}", drv_hash));
     std::fs::create_dir_all(&temp_dir)?;
 
-    let temp_file = temp_dir.join(format!("drv-{}.json", input_drv.name));
+    let drv_json_name = format!("drv-{}.json", input_drv.name);
+    let temp_file = temp_dir.join(&drv_json_name);
     fs::write(&temp_file, &drv_json)?;
-    let drv_json_path = tools.nix_tool.store_add(store_dir, &temp_file)?;
+    let drv_json_path = if let Some(mut client) = VarlinkClient::connect_from_env()? {
+        client.add_to_store_nar(store_dir, &drv_json_name, |sink| dump_nar(&temp_file, sink))?
+    } else {
+        tools.nix_tool.store_add(store_dir, &temp_file)?
+    };
 
     // Add derivation.json as input dependency and argument
     drv.inputs
@@ -737,9 +747,8 @@ fn handle_derivation_result(
         if config.is_output_derivation {
             let dynamic_drv =
                 build_dynamic_task_derivation(tools.clone(), &config.store_dir, drv, built_inputs)?;
-            let dynamic_drv_path = tools
-                .nix_tool
-                .derivation_add(&config.store_dir, &dynamic_drv)?;
+            let dynamic_drv_path =
+                add_derivation(&tools.nix_tool, &config.store_dir, &dynamic_drv)?;
             Ok(SingleDerivedPath::Built {
                 drv_path: Arc::new(SingleDerivedPath::Opaque(dynamic_drv_path)),
                 output: "out".parse().unwrap(),
@@ -774,12 +783,27 @@ fn handle_derivation_result(
                 &config.store_dir,
             )?;
 
-            let drv_path = tools.nix_tool.derivation_add(&config.store_dir, &drv)?;
+            let drv_path = add_derivation(&tools.nix_tool, &config.store_dir, &drv)?;
             Ok(SingleDerivedPath::Opaque(drv_path))
         }
     } else {
-        let drv_path = tools.nix_tool.derivation_add(&config.store_dir, &drv)?;
+        let drv_path = add_derivation(&tools.nix_tool, &config.store_dir, &drv)?;
         Ok(SingleDerivedPath::Opaque(drv_path))
+    }
+}
+
+/// Add a derivation to the store, preferring Varlink when available
+/// (`$NIX_VARLINK_REMOTE` set inside a `builder-rpc-v1` sandbox) and
+/// falling back to the legacy `nix derivation add` subprocess otherwise.
+fn add_derivation(
+    nix_tool: &NixTool,
+    store_dir: &StoreDir,
+    drv: &Derivation,
+) -> Result<StorePath> {
+    if let Some(mut client) = VarlinkClient::connect_from_env()? {
+        Ok(client.add_derivation(store_dir, drv)?)
+    } else {
+        nix_tool.derivation_add(store_dir, drv)
     }
 }
 
@@ -835,6 +859,7 @@ fn new_opaque_file(
         derived_path: SingleDerivedPath::Opaque(store_path.clone()),
         build_path: relative_path,
         rel_path: None, // None for opaque files - store path points directly to file
+        output_name: None,
     })
 }
 
@@ -846,7 +871,8 @@ fn new_built_file(derived_path: SingleDerivedPath, build_path: PathBuf) -> Deriv
             output: output_name.parse().expect("invalid output name"),
         },
         build_path: build_path.clone(),
-        rel_path: Some(build_path), // For built files, rel_path same as build_path
+        rel_path: Some(build_path),
+        output_name: None,
     }
 }
 

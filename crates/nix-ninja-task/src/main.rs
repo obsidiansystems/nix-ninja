@@ -1,8 +1,9 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use clap::Parser;
 use harmonia_store_core::store_path::StoreDir;
 use nix_ninja_task::derived_file::{create_symlinks, DerivedFile};
 use nix_ninja_task::patchelf;
+use nix_varlink_client::{dump_nar, VarlinkClient};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -87,20 +88,82 @@ fn main() -> Result<()> {
     // than relative path binaries in the build dir.
     patchelf::fix_rpaths(cli.store_dir.to_path(), &outputs)?;
 
-    // Outputs must be created in build directory and then copied out because
-    // ninja build rules can have implicit outputs that we have no way of
-    // knowing. For example, a custom command that doesn't leverage the `$out`
-    // implicit variable in the ninja evaluation context.
-    println!(
-        "nix-ninja-task: Finished! Copying {} build outputs to derivation output paths",
-        outputs.len(),
-    );
-    for output in &outputs {
-        let target_path = output.absolute_path(&cli.store_dir);
+    // Submit outputs back to the store. Outputs are physically created in the
+    // build directory and then handed over because ninja build rules can have
+    // implicit outputs that we have no way of knowing — e.g. a custom command
+    // that doesn't leverage the `$out` implicit variable in the ninja
+    // evaluation context.
+    if let Some(mut client) = VarlinkClient::connect_from_env()? {
+        println!(
+            "nix-ninja-task: Finished! Submitting {} outputs via builder-rpc-v1",
+            outputs.len(),
+        );
+        submit_outputs_via_varlink(&mut client, &cli.store_dir, &outputs)?;
+    } else {
+        println!(
+            "nix-ninja-task: Finished! Copying {} build outputs to derivation output paths",
+            outputs.len(),
+        );
+        copy_outputs_to_placeholders(&cli.store_dir, &outputs)?;
+    }
+
+    Ok(())
+}
+
+fn copy_outputs_to_placeholders(store_dir: &StoreDir, outputs: &[DerivedFile]) -> Result<()> {
+    for output in outputs {
+        let target_path = output.absolute_path(store_dir);
         if let Some(parent) = target_path.parent() {
             fs::create_dir_all(parent)?;
         }
         fs::copy(&output.build_path, &target_path)?;
+    }
+    Ok(())
+}
+
+fn submit_outputs_via_varlink(
+    client: &mut VarlinkClient,
+    store_dir: &StoreDir,
+    outputs: &[DerivedFile],
+) -> Result<()> {
+    // Stage each output as a directory whose contents match what consumers
+    // would have seen at the placeholder path: a file at `<rel_path>`. We NAR
+    // that staging directory and submit it.
+    let staging_root = std::env::var("NIX_BUILD_TOP")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| std::env::temp_dir())
+        .join("nix-ninja-task-outputs");
+    fs::create_dir_all(&staging_root)?;
+
+    for output in outputs {
+        let name = output
+            .output_name
+            .as_deref()
+            .ok_or_else(|| anyhow!("output {} has no output name", output.build_path.display()))?;
+        let rel_path = output
+            .rel_path
+            .as_ref()
+            .ok_or_else(|| anyhow!("output {name} has no rel_path"))?;
+
+        let staging = staging_root.join(name);
+        if staging.exists() {
+            fs::remove_dir_all(&staging)?;
+        }
+        fs::create_dir_all(&staging)?;
+        let dest = staging.join(rel_path);
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::copy(&output.build_path, &dest)?;
+
+        let store_path =
+            client.add_to_store_nar(store_dir, name, |sink| dump_nar(&staging, sink))?;
+        client.submit_output(store_dir, name, &store_path)?;
+
+        println!(
+            "nix-ninja-task: Submitted output {name} -> {}",
+            store_dir.display(&store_path),
+        );
     }
 
     Ok(())

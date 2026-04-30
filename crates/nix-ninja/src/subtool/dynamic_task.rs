@@ -4,6 +4,7 @@ use harmonia_store_core::derived_path::SingleDerivedPath;
 use harmonia_store_core::store_path::{StoreDir, StorePath};
 use nix_ninja_task::derived_file::DerivedFile;
 use nix_tool::NixTool;
+use nix_varlink_client::VarlinkClient;
 use std::{
     collections::{HashMap, HashSet},
     env, fs,
@@ -48,9 +49,16 @@ pub fn run(nix_tool: NixTool, store_dir: &StoreDir, targets: Vec<String>) -> Res
         println!("nix-ninja-dynamic-task: No new dependencies discovered");
     }
 
-    let drv_path = nix_tool.derivation_add(store_dir, &drv)?;
-    let out = env::var("out").map_err(|_| anyhow!("Expected $out to be set"))?;
-    fs::copy(drv_path.to_absolute_path(store_dir), out)?;
+    let drv_path = if let Some(mut client) = VarlinkClient::connect_from_env()? {
+        let path = client.add_derivation(store_dir, &drv)?;
+        client.submit_output(store_dir, "out", &path)?;
+        path
+    } else {
+        let path = nix_tool.derivation_add(store_dir, &drv)?;
+        let out = env::var("out").map_err(|_| anyhow!("Expected $out to be set"))?;
+        fs::copy(path.to_absolute_path(store_dir), out)?;
+        path
+    };
 
     println!("nix-ninja-dynamic-task: Added derivation to store: {drv_path}");
     Ok(0)
