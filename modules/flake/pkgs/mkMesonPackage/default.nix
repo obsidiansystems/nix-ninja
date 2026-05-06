@@ -30,7 +30,7 @@ let
       patchelf
     ] ++ nativeBuildInputs;
 
-    requiredSystemFeatures = [ "recursive-nix" ];
+    requiredSystemFeatures = [ "builder-rpc-v1" ];
 
     preConfigure = ''
       export NIX_NINJA_DRV="true"

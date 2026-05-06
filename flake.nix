@@ -4,9 +4,10 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-25.11";
     nix = {
-      # Local checkout with PR #13768 (varlink builder IPC) for development.
-      # Revert to `github:NixOS/nix` once the PR lands.
-      url = "git+file:///home/amaanq/projects/nix/varlink?ref=varlink-pr-13768";
+      # The Varlink path requires a Nix built from NixOS/nix#13768. While
+      # that PR is in draft, override locally with e.g.
+      #   nix build --override-input nix git+file:///path/to/nix?ref=varlink-pr-13768 .#example-hello
+      url = "github:NixOS/nix";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.nixpkgs-23-11.follows = "";
       inputs.nixpkgs-regression.follows = "";

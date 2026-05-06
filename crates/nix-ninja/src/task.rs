@@ -679,10 +679,13 @@ fn build_dynamic_task_derivation(
         b"extra-experimental-features = nix-command ca-derivations dynamic-derivations"[..].into(),
     );
 
-    // Require recursive-nix to allow nix commands inside the build
+    // Require builder-rpc-v1 so the dynamic-task drv runs inside a sandbox
+    // with the Varlink IPC socket bind-mounted in (NixOS/nix#13768).
+    // nix-ninja's inside-sandbox code path then talks Varlink instead of
+    // shelling out to a recursive-nix daemon.
     drv.env.insert(
         b"requiredSystemFeatures"[..].into(),
-        b"recursive-nix"[..].into(),
+        b"builder-rpc-v1"[..].into(),
     );
 
     // Serialize the derivation to a temporary file and add to nix store
