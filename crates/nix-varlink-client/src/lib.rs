@@ -32,6 +32,11 @@ pub const SOCKET_ENV: &str = "NIX_VARLINK_REMOTE";
 
 const INTERFACE: &str = "org.nix.derivation-builder";
 
+/// Hard cap on a single Varlink reply. Replies are tiny JSON envelopes; a
+/// runaway server (or a torn connection that never sends `\0`) must not be
+/// allowed to exhaust memory while we read byte-by-byte for the terminator.
+const MAX_REPLY_BYTES: usize = 1 << 20;
+
 #[derive(thiserror::Error, Debug)]
 pub enum VarlinkError {
     #[error("server returned NoFileDescriptor")]
@@ -193,6 +198,11 @@ impl VarlinkClient {
         self.buf.clear();
         let mut byte = [0u8; 1];
         loop {
+            if self.buf.len() >= MAX_REPLY_BYTES {
+                return Err(VarlinkError::Protocol(format!(
+                    "reply exceeded {MAX_REPLY_BYTES} bytes without null terminator"
+                )));
+            }
             let n = self.socket.read(&mut byte)?;
             if n == 0 {
                 return Err(VarlinkError::Protocol("server closed connection".into()));

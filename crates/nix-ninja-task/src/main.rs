@@ -6,7 +6,7 @@ use nix_ninja_task::patchelf;
 use nix_varlink_client::{dump_nar, VarlinkClient};
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
 #[derive(Parser)]
@@ -144,6 +144,7 @@ fn submit_outputs_via_varlink(
             .rel_path
             .as_ref()
             .ok_or_else(|| anyhow!("output {name} has no rel_path"))?;
+        ensure_safe_relative(rel_path, name)?;
 
         let staging = staging_root.join(name);
         if staging.exists() {
@@ -166,6 +167,29 @@ fn submit_outputs_via_varlink(
         );
     }
 
+    Ok(())
+}
+
+/// Reject relative paths that would escape the staging directory after
+/// `Path::join` (absolute paths replace the base; `..` walks above it).
+fn ensure_safe_relative(p: &Path, name: &str) -> Result<()> {
+    if p.is_absolute() {
+        return Err(anyhow!(
+            "output {name} has absolute rel_path: {}",
+            p.display()
+        ));
+    }
+    for component in p.components() {
+        match component {
+            Component::Normal(_) | Component::CurDir => {}
+            _ => {
+                return Err(anyhow!(
+                    "output {name} has unsafe rel_path component in {}",
+                    p.display()
+                ));
+            }
+        }
+    }
     Ok(())
 }
 
